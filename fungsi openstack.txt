@@ -1,0 +1,123 @@
+#!/bin/bash
+
+function mati() {
+	clear
+	
+	echo " [*] Matiin server dong ..."
+	
+	init 0
+}
+
+function keystone_restart() {
+	echo " [*] Sync db ..."
+	keystone-manage db_sync
+	
+	sleep 3
+	
+	echo " [*] Restart keystone ..."
+	service keystone restart
+}
+
+function glance_restart() {
+	echo " [*] Sync db ..."
+	glance-manage db_sync
+	
+	sleep 3
+	
+	echo " [*] Restart glance ..."
+	for service in api registry
+	do
+		service glance-$service restart
+	done
+}
+
+function nova_restart() {
+	echo " [*] Sync db ..."
+	nova-manage db sync
+	
+	sleep 3
+	
+	echo " [*] Restart nova ..."
+	service apache2 restart
+	for service in api conductor network scheduler objectstore cert consoleauth compute novncproxy
+	do
+		service nova-$service restart
+	done
+	
+	sleep 3
+	
+	echo " [*] Done ..."
+	nova-manage service list
+}
+
+function cinder_restart() {
+	echo " [*] Sync db ..."
+	cinder-manage db sync
+	
+	sleep 3
+	
+	echo " [*] Restart cinder ..."
+	service tgt restart
+	for service in api scheduler volume
+	do
+		service cinder-$service restart
+	done
+}
+
+
+function cinder_create_volume() {
+	read -p " [*] Enter volume size (in GB) : " size
+	
+	sleep 3
+	
+	echo " [*] Create $size GB of file /cinder-volumes ..."
+	file=$size"G"
+	dd if=/dev/zero of=/cinder-volumes bs=1 count=0 seek=$file
+	ls -al / | grep cinder-volumes
+	sleep 3
+	
+	losetup /dev/loop2 /cinder-volumes
+	sleep 3
+	
+	echo "losetup /dev/loop2 /cinder-volumes; exit 0;" > /etc/init.d/cinder-setup-backing-file
+	chmod 755 /etc/init.d/cinder-setup-backing-file
+	ln -s /etc/init.d/cinder-setup-backing-file /etc/rc2.d/S10cinder-setup-backing-file
+	
+	pvcreate /dev/loop2
+	pvdisplay
+	sleep 3
+	
+	vgcreate cinder-volumes /dev/loop2
+	vgdisplay
+	sleep 3
+	
+	echo " [*] Done ..."
+	cinder_restart
+}
+
+function cinder_create_bootable_disk() {
+	echo " [*] Preparing volume disk ..."
+	echo "losetup /dev/loop2 /cinder-volumes; exit 0;" > /etc/init.d/cinder-setup-backing-file
+	chmod 755 /etc/init.d/cinder-setup-backing-file
+	ln -s /etc/init.d/cinder-setup-backing-file /etc/rc2.d/S10cinder-setup-backing-file
+}
+
+function cinder_delete_volume() {
+	echo " [*] Deleting volume ..."
+	vgscan
+	vgremove cinder-volumes
+	sleep 3
+	
+	pvscan
+	pvremove /dev/loop2
+	sleep 3
+	
+	losetup -d /dev/loop2
+	sleep 3
+	
+	rm /cinder-volumes
+	cinder_restart
+	sleep 3
+	
+	echo " [*] Done ..."
+}
